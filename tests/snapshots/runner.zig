@@ -1,6 +1,7 @@
 const std = @import("std");
+const nexa = @import("nexa");
 
-test "snapshot corpus: 001_add fixtures" {
+test "snapshot corpus: 001_add" {
     const cwd = std.fs.cwd();
     const lua_path = "tests/snapshots/arithmetic/001_add.lua";
     const exp_path = "tests/snapshots/arithmetic/001_add.expected";
@@ -10,6 +11,9 @@ test "snapshot corpus: 001_add fixtures" {
     const expected = try cwd.readFileAlloc(std.testing.allocator, exp_path, 1024 * 1024);
     defer std.testing.allocator.free(expected);
 
-    try std.testing.expect(std.mem.indexOf(u8, lua_src, "1") != null);
-    try std.testing.expectEqualStrings("2\n", expected);
+    var out = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer out.deinit();
+    try nexa.runChunk(std.testing.allocator, lua_src, &out);
+
+    try std.testing.expectEqualStrings(expected, out.items);
 }

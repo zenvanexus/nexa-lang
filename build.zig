@@ -36,6 +36,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("tests/snapshots/runner.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{.{ .name = "nexa", .module = nexa_mod }},
         }),
     });
     const run_snapshot_tests = b.addRunArtifact(snapshot_tests);
