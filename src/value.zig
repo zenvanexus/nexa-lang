@@ -11,8 +11,20 @@ pub const Value = union(enum) {
     nil,
     boolean: bool,
     number: f64,
+    /// Heap-allocated string (e.g. concatenation, host).
     string: *String,
+    /// Source literal; `bytes` live in the parse arena for the duration of `runChunk`.
+    string_lit: []const u8,
     table: *Table,
     function: *FunctionObj,
     builtin: Builtin,
 };
+
+/// Bytes for string-like values, if any.
+pub fn stringBytes(v: Value) ?[]const u8 {
+    return switch (v) {
+        .string => |s| s.bytes,
+        .string_lit => |b| b,
+        else => null,
+    };
+}

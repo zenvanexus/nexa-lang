@@ -58,3 +58,17 @@ test "eval print add" {
     try runChunk(std.testing.allocator, src, &out);
     try std.testing.expectEqualStrings("2\n", out.items);
 }
+
+test "elseif and numeric for" {
+    const src =
+        \\local x = 0
+        \\if false then x = 1 elseif true then x = 2 else x = 3 end
+        \\local s = 0
+        \\for i = 1, 3 do s = s + i end
+        \\print(x, s)
+    ;
+    var out = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer out.deinit();
+    try runChunk(std.testing.allocator, src, &out);
+    try std.testing.expectEqualStrings("2\t6\n", out.items);
+}

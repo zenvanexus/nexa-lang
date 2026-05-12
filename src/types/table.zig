@@ -1,5 +1,6 @@
 const std = @import("std");
 const Value = @import("../value.zig").Value;
+const stringBytes = @import("../value.zig").stringBytes;
 
 /// Minimal Lua-like table: positive integer keys use a 1-based array; string keys use a map.
 pub const Table = struct {
@@ -12,6 +13,10 @@ pub const Table = struct {
 
     pub fn deinit(self: *Table, allocator: std.mem.Allocator) void {
         self.array.deinit(allocator);
+        var it = self.map.iterator();
+        while (it.next()) |kv| {
+            allocator.free(kv.key_ptr.*);
+        }
         self.map.deinit(allocator);
     }
 
@@ -26,6 +31,10 @@ pub const Table = struct {
     pub fn get(self: *const Table, key: Value) Value {
         switch (key) {
             .nil, .boolean, .function, .builtin => return .nil,
+            .string_lit, .string => {
+                const sb = stringBytes(key).?;
+                return self.map.get(sb) orelse .nil;
+            },
             .number => |n| {
                 if (isArrayIndex(n)) |i| {
                     if (i == 0 or i > self.array.items.len) return .nil;
@@ -33,7 +42,6 @@ pub const Table = struct {
                 }
                 return .nil;
             },
-            .string => |s| return self.map.get(s.bytes) orelse .nil,
             .table => return .nil,
         }
     }
@@ -53,8 +61,15 @@ pub const Table = struct {
                     return;
                 }
             },
-            .string => |s| {
-                try self.map.put(allocator, s.bytes, val);
+            .string_lit, .string => {
+                const sb = stringBytes(key).?;
+                if (self.map.getPtr(sb)) |vp| {
+                    vp.* = val;
+                    return;
+                }
+                const owned = try allocator.dupe(u8, sb);
+                errdefer allocator.free(owned);
+                try self.map.put(allocator, owned, val);
                 return;
             },
             else => {},

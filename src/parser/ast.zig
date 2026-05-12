@@ -50,6 +50,7 @@ pub const Expr = union(enum) {
         obj: *Expr,
         key: *Expr,
     },
+    table_ctor: TableCtor,
     anon_function: struct {
         params: []const []const u8,
         body: *Block,
@@ -71,9 +72,13 @@ pub const Assign = struct {
     values: []const *Expr,
 };
 
-pub const IfStmt = struct {
+pub const IfBranch = struct {
     cond: *Expr,
     then_blk: *Block,
+};
+
+pub const IfStmt = struct {
+    branches: []const IfBranch,
     else_blk: ?*Block,
 };
 
@@ -85,6 +90,29 @@ pub const WhileStmt = struct {
 pub const RepeatStmt = struct {
     body: *Block,
     cond: *Expr,
+};
+
+/// `for name = start, limit [, step] do ... end` (numeric for).
+pub const ForNumericStmt = struct {
+    var_name: []const u8,
+    start: *Expr,
+    limit: *Expr,
+    step: ?*Expr,
+    body: *Block,
+};
+
+pub const TableEntry = union(enum) {
+    /// `{ expr }` — next consecutive positive integer key.
+    array_elem: *Expr,
+    /// `[k] = v` or `name = v`.
+    keyed: struct {
+        key: *Expr,
+        value: *Expr,
+    },
+};
+
+pub const TableCtor = struct {
+    entries: []const TableEntry,
 };
 
 pub const FuncDecl = struct {
@@ -104,6 +132,7 @@ pub const Stmt = union(enum) {
     if_stmt: IfStmt,
     while_stmt: WhileStmt,
     repeat_stmt: RepeatStmt,
+    for_numeric: ForNumericStmt,
     func_decl: FuncDecl,
     ret: ReturnStmt,
     break_stmt: void,

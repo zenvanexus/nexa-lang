@@ -88,6 +88,7 @@ const Parser = struct {
             .function => return p.parseFunctionDecl(),
             .if_kw => return p.parseIfStatement(),
             .while_kw => return p.parseWhile(),
+            .for_kw => return p.parseForStatement(),
             .repeat => return p.parseRepeat(),
             .do => return p.parseDoEnd(),
             .return_kw => return p.parseReturn(outer_stop),
@@ -171,12 +172,20 @@ const Parser = struct {
         return p.parseIfTail();
     }
 
-    /// After `if` keyword; parses `expr then ... end` (optional `else`; `elseif` not supported yet).
+    /// After `if` keyword; parses `expr then ... end` with `elseif` / optional `else`.
     fn parseIfTail(p: *Parser) ParseError!*ast.Stmt {
-        const cond = try p.parseExpr(0);
-        try p.eat(.then);
-        const then_stmts = try p.stmtList(&.{ .else_kw, .end });
-        const then_blk = try p.allocBlock(then_stmts);
+        const stop_then: []const lex.Tag = &.{ .else_kw, .elseif, .end };
+        var branches: std.ArrayListUnmanaged(ast.IfBranch) = .{};
+        defer branches.deinit(p.arena);
+        while (true) {
+            const cond = try p.parseExpr(0);
+            try p.eat(.then);
+            const then_stmts = try p.stmtList(stop_then);
+            const then_blk = try p.allocBlock(then_stmts);
+            try branches.append(p.arena, .{ .cond = cond, .then_blk = then_blk });
+            if (p.match(.elseif)) continue;
+            break;
+        }
         var else_blk: ?*ast.Block = null;
         if (p.match(.else_kw)) {
             const es = try p.stmtList(&.{.end});
@@ -184,9 +193,32 @@ const Parser = struct {
         }
         try p.eat(.end);
         return p.allocStmt(.{ .if_stmt = .{
-            .cond = cond,
-            .then_blk = then_blk,
+            .branches = try branches.toOwnedSlice(p.arena),
             .else_blk = else_blk,
+        } });
+    }
+
+    /// `for` — numeric `for v = e1, e2 [, e3] do ... end` only (generic `for ... in` not yet).
+    fn parseForStatement(p: *Parser) ParseError!*ast.Stmt {
+        try p.eat(.for_kw);
+        if (p.at() != .ident) return error.UnexpectedToken;
+        const var_name = try p.dup(p.peek().lexeme);
+        p.advance();
+        try p.eat(.eq);
+        const start_e = try p.parseExpr(0);
+        try p.eat(.comma);
+        const limit_e = try p.parseExpr(0);
+        const step_e: ?*ast.Expr = if (p.match(.comma)) try p.parseExpr(0) else null;
+        try p.eat(.do);
+        const body_s = try p.stmtList(&.{.end});
+        try p.eat(.end);
+        const body = try p.allocBlock(body_s);
+        return p.allocStmt(.{ .for_numeric = .{
+            .var_name = var_name,
+            .start = start_e,
+            .limit = limit_e,
+            .step = step_e,
+            .body = body,
         } });
     }
 
@@ -221,7 +253,7 @@ const Parser = struct {
         try p.eat(.return_kw);
         var vals: std.ArrayListUnmanaged(*ast.Expr) = .{};
         defer vals.deinit(p.arena);
-        if (!stops(p.at(), outer_stop) and p.at() != .end and p.at() != .else_kw) {
+        if (!stops(p.at(), outer_stop) and p.at() != .end and p.at() != .else_kw and p.at() != .elseif) {
             while (true) {
                 try vals.append(p.arena, try p.parseExpr(0));
                 if (p.match(.comma)) continue else break;
@@ -355,6 +387,7 @@ const Parser = struct {
                 g = try p.suffixChain(g);
                 return g;
             },
+            .lbrace => return p.parseTableConstructor(),
             .function => {
                 try p.eat(.function);
                 try p.eat(.lparen);
@@ -367,6 +400,40 @@ const Parser = struct {
             },
             else => return error.UnexpectedToken,
         }
+    }
+
+    fn parseTableConstructor(p: *Parser) ParseError!*ast.Expr {
+        try p.eat(.lbrace);
+        var entries: std.ArrayListUnmanaged(ast.TableEntry) = .{};
+        defer entries.deinit(p.arena);
+        while (p.at() != .rbrace) {
+            if (p.at() == .eof) return error.UnexpectedEof;
+            if (p.match(.comma) or p.match(.semicolon)) continue;
+
+            if (p.match(.lbrack)) {
+                const key = try p.parseExpr(0);
+                try p.eat(.rbrack);
+                try p.eat(.eq);
+                const val = try p.parseExpr(0);
+                try entries.append(p.arena, .{ .keyed = .{ .key = key, .value = val } });
+            } else {
+                const sub = try p.parseExpr(0);
+                if (p.match(.eq)) {
+                    const field_name = switch (sub.*) {
+                        .name => |n| n,
+                        else => return error.UnexpectedToken,
+                    };
+                    const val = try p.parseExpr(0);
+                    const key = try p.allocExpr(.{ .literal = .{ .string = try p.dup(field_name) } });
+                    try entries.append(p.arena, .{ .keyed = .{ .key = key, .value = val } });
+                } else {
+                    try entries.append(p.arena, .{ .array_elem = sub });
+                }
+            }
+            _ = p.match(.comma) or p.match(.semicolon);
+        }
+        try p.eat(.rbrace);
+        return p.allocExpr(.{ .table_ctor = .{ .entries = try entries.toOwnedSlice(p.arena) } });
     }
 
     fn suffixChain(p: *Parser, base: *ast.Expr) ParseError!*ast.Expr {

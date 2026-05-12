@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("../parser/ast.zig");
 const Value = @import("../value.zig").Value;
 const Builtin = @import("../value.zig").Builtin;
+const stringBytes = @import("../value.zig").stringBytes;
 const String = @import("../types/string.zig").String;
 const Table = @import("../types/table.zig").Table;
 const FunctionObj = @import("../types/function.zig").FunctionObj;
@@ -130,11 +131,14 @@ pub const Interpreter = struct {
                 return .none;
             },
             .if_stmt => |ifs| {
-                if (truthy(try self.evalExpr(ifs.cond))) {
-                    try self.pushScope();
-                    defer self.popScope();
-                    return self.execBlock(ifs.then_blk, is_function);
-                } else if (ifs.else_blk) |eb| {
+                for (ifs.branches) |br| {
+                    if (truthy(try self.evalExpr(br.cond))) {
+                        try self.pushScope();
+                        defer self.popScope();
+                        return self.execBlock(br.then_blk, is_function);
+                    }
+                }
+                if (ifs.else_blk) |eb| {
                     try self.pushScope();
                     defer self.popScope();
                     return self.execBlock(eb, is_function);
@@ -153,6 +157,37 @@ pub const Interpreter = struct {
                         .@"break" => break,
                         .ret => return f,
                     }
+                }
+                return .none;
+            },
+            .for_numeric => |fr| {
+                self.loop_depth += 1;
+                defer self.loop_depth -= 1;
+                try self.pushScope();
+                defer self.popScope();
+                const n0 = try asNumber(try self.evalExpr(fr.start));
+                const lim = try asNumber(try self.evalExpr(fr.limit));
+                const step_val = if (fr.step) |se|
+                    try asNumber(try self.evalExpr(se))
+                else
+                    @as(f64, 1);
+                try self.declareLocal(fr.var_name, .{ .number = n0 });
+                while (true) {
+                    const cur_v = self.lookupName(fr.var_name) orelse return error.UndefinedVariable;
+                    const cur = try asNumber(cur_v);
+                    if (step_val > 0) {
+                        if (cur > lim) break;
+                    } else if (step_val < 0) {
+                        if (cur < lim) break;
+                    }
+                    const f = try self.execBlock(fr.body, is_function);
+                    switch (f) {
+                        .none => {},
+                        .@"break" => break,
+                        .ret => return f,
+                    }
+                    const after = cur + step_val;
+                    try self.assignName(fr.var_name, .{ .number = after });
                 }
                 return .none;
             },
@@ -220,11 +255,7 @@ pub const Interpreter = struct {
                 .bool_true => return .{ .boolean = true },
                 .bool_false => return .{ .boolean = false },
                 .number => |n| return .{ .number = n },
-                .string => |bytes| {
-                    const s = self.backing.create(String) catch return error.OutOfMemory;
-                    s.* = String.dupe(self.backing, bytes) catch return error.OutOfMemory;
-                    return .{ .string = s };
-                },
+                .string => |bytes| return .{ .string_lit = bytes },
             },
             .name => |n| return self.lookupName(n) orelse error.UndefinedVariable,
             .unary => |u| {
@@ -237,6 +268,7 @@ pub const Interpreter = struct {
                     .not => return .{ .boolean = !truthy(v) },
                     .len => switch (v) {
                         .string => |s| return .{ .number = @floatFromInt(s.bytes.len) },
+                        .string_lit => |b| return .{ .number = @floatFromInt(b.len) },
                         .table => |t| return .{ .number = @floatFromInt(t.array.items.len) },
                         else => return error.TypeMismatch,
                     },
@@ -270,6 +302,26 @@ pub const Interpreter = struct {
                     .table => |t| return t.get(key),
                     else => return error.TypeMismatch,
                 }
+            },
+            .table_ctor => |tc| {
+                const t = self.backing.create(Table) catch return error.OutOfMemory;
+                t.* = Table.init();
+                var seq: f64 = 1;
+                for (tc.entries) |ent| {
+                    switch (ent) {
+                        .array_elem => |elem| {
+                            const v = try self.evalExpr(elem);
+                            try t.set(.{ .number = seq }, v, self.backing);
+                            seq += 1;
+                        },
+                        .keyed => |kv| {
+                            const k = try self.evalExpr(kv.key);
+                            const val = try self.evalExpr(kv.value);
+                            try t.set(k, val, self.backing);
+                        },
+                    }
+                }
+                return .{ .table = t };
             },
             .group => |g| return self.evalExpr(g),
             .anon_function => |af| {
@@ -311,12 +363,20 @@ pub const Interpreter = struct {
     }
 };
 
+fn asNumber(v: Value) VmError!f64 {
+    return switch (v) {
+        .number => |n| n,
+        else => error.TypeMismatch,
+    };
+}
+
 fn truthy(v: Value) bool {
     return switch (v) {
         .nil => false,
         .boolean => |b| b,
         .number => |n| n != 0,
         .string => |s| s.bytes.len > 0,
+        .string_lit => |b| b.len > 0,
         .table, .function, .builtin => true,
     };
 }
@@ -331,6 +391,7 @@ fn appendValueToOut(self: *Interpreter, v: Value) VmError!void {
             self.out.appendSlice(s) catch return error.OutOfMemory;
         },
         .string => |s| self.out.appendSlice(s.bytes) catch return error.OutOfMemory,
+        .string_lit => |b| self.out.appendSlice(b) catch return error.OutOfMemory,
         .table => self.out.appendSlice("table") catch return error.OutOfMemory,
         .function => self.out.appendSlice("function") catch return error.OutOfMemory,
         .builtin => self.out.appendSlice("builtin") catch return error.OutOfMemory,
@@ -397,40 +458,46 @@ fn appendValueToBuf(self: *Interpreter, buf: *std.ArrayListUnmanaged(u8), v: Val
             buf.appendSlice(self.backing, s) catch return error.OutOfMemory;
         },
         .string => |s| buf.appendSlice(self.backing, s.bytes) catch return error.OutOfMemory,
+        .string_lit => |b| buf.appendSlice(self.backing, b) catch return error.OutOfMemory,
         else => return error.TypeMismatch,
     }
 }
 
 fn valueEq(a: Value, b: Value) bool {
+    if (stringBytes(a)) |sa| {
+        if (stringBytes(b)) |sb| return std.mem.eql(u8, sa, sb);
+        return false;
+    }
+    if (stringBytes(b)) |_| return false;
     if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
     return switch (a) {
         .nil => true,
         .boolean => |x| x == b.boolean,
         .number => |x| x == b.number,
-        .string => |x| std.mem.eql(u8, x.bytes, b.string.bytes),
         .table => |x| x == b.table,
         .function => |x| x == b.function,
         .builtin => |x| x == b.builtin,
+        .string, .string_lit => unreachable,
     };
 }
 
 const Cmp = enum { lt, eq, gt };
 
 fn compareValues(l: Value, r: Value) VmError!Cmp {
+    if (stringBytes(l)) |xs| {
+        if (stringBytes(r)) |ys| {
+            const o = std.mem.order(u8, xs, ys);
+            if (o == .lt) return .lt;
+            if (o == .gt) return .gt;
+            return .eq;
+        }
+        return error.TypeMismatch;
+    }
     return switch (l) {
         .number => |x| switch (r) {
             .number => |y| {
                 if (x < y) return .lt;
                 if (x > y) return .gt;
-                return .eq;
-            },
-            else => return error.TypeMismatch,
-        },
-        .string => |xs| switch (r) {
-            .string => |ys| {
-                const o = std.mem.order(u8, xs.bytes, ys.bytes);
-                if (o == .lt) return .lt;
-                if (o == .gt) return .gt;
                 return .eq;
             },
             else => return error.TypeMismatch,

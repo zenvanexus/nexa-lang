@@ -15,7 +15,7 @@
 
 ## 2. Non-goals (Phase 0)
 
-- Bytecode, JIT, incremental GC, coroutines, full standard library, `require`, metamethods, `goto`, `elseif`, varargs `...`, proper `local function` desugaring, full numeric coercion rules, and full Lua lexical edge cases (e.g. long strings `[[...]]`).
+- Bytecode, JIT, incremental GC, coroutines, full standard library, `require`, metamethods, `goto`, generic `for … in`, varargs `...`, proper `local function` desugaring, full numeric coercion rules, and full Lua lexical edge cases (e.g. long strings `[[...]]`).
 - Drop-in compatibility with every Lua program on the internet.
 
 ---
@@ -37,9 +37,9 @@ Two allocators at run boundary:
 
 **Literals:** `nil`, `true`, `false`, numbers (decimal + optional fraction + optional exponent), double-quoted strings with escapes `\n \t \r \\ \"`.
 
-**Expressions:** identifiers, grouping `(...)`, calls `f(a,b)`, indexing `t[k]` and `t.k` (field desugars to string key), unary `-` `not` `#`, binary `+ - * / % ^ ..`, comparisons `== ~= < <= > >=`, short-circuit `and` `or` (parser emits `ast.BinOp` for `and`/`or`; interpreter short-circuits).
+**Expressions:** identifiers, grouping `(...)`, calls `f(a,b)`, indexing `t[k]` and `t.k` (field desugars to string key), unary `-` `not` `#`, binary `+ - * / % ^ ..`, comparisons `== ~= < <= > >=`, short-circuit `and` `or` (parser emits `ast.BinOp` for `and`/`or`; interpreter short-circuits), **table constructors** `{ … }` (list fields get consecutive integer keys `1..n`; `[k] = v` and `name = v` keyed fields; optional `,` / `;` between fields).
 
-**Statements:** `;`, expression statements, `local` (with `=` and expression lists; missing inits default to `nil`), assignment (multi-target / multi-value surface syntax; semantics match simple Lua for the supported cases), `if then [else] end` (**`elseif` not implemented yet** — use nested `if` in `else`), `while do end`, `repeat until`, `do end`, `break`, `return` (only inside a function body), `function name(args) ... end` (registers a **global** function; use `local f = function() ... end` for locals).
+**Statements:** `;`, expression statements, `local` (with `=` and expression lists; missing inits default to `nil`), assignment (multi-target / multi-value surface syntax; semantics match simple Lua for the supported cases), `if then [elseif then]* [else] end`, **numeric** `for v = e1, e2 [, e3] do … end` (step defaults to `1`; bounds and step must evaluate to numbers), `while do end`, `repeat until`, `do end`, `break`, `return` (only inside a function body), `function name(args) ... end` (registers a **global** function; use `local f = function() ... end` for locals).
 
 **Anonymous functions:** `function(args) ... end` as an **expression** is parsed and creates a `FunctionObj` at runtime.
 
@@ -55,7 +55,7 @@ Two allocators at run boundary:
 - **Functions:** `Value.function` points at `FunctionObj` `{ name, params, body }`. Call pushes a fresh scope, binds parameters, runs `body`, first returned value becomes the call result (multiple returns are not surfaced to callers yet).
 - **Builtins:** `Value.builtin` — only `.print` is wired. Writes tab-separated arguments and a newline to the run’s output buffer (`std.array_list.Managed(u8)`).
 
-**Tables:** `Table` exists for `t[k]` / `t.k` when `t` is a table value; **table constructors are not implemented** in the parser yet, so user-visible tables are minimal unless created from host code later.
+**Tables:** `Table` backs `t[k]` / `t.k` and **table constructors** `{ … }` (see expressions above). No metamethods or `__index` chain.
 
 ---
 
@@ -94,7 +94,8 @@ On error, prints `@errorName` to stderr and exits with code `1`. Missing script 
 
 ## 9. Known gaps / next steps toward Phase 1
 
-- **`elseif`**, `for`, `in`, numeric `for`, table constructors `{ }`, metamethods, `_ENV`, exact Lua scoping for `function` statements in all contexts.
+- **Generic** `for namelist in explist`, metamethods, `_ENV`, exact Lua scoping for `function` statements in all contexts.
+- **Heap teardown:** `Table` values from `{ … }` (and string keys stored in those tables) are not recursively freed when the interpreter exits; avoid GPA leak checks on scripts that retain tables until a GC or explicit teardown exists.
 - **Return values:** multi-return from calls; tail calls.
 - **Error locations:** no `source_info` module yet; parse/runtime errors use Zig `error` names only.
 - **Bytecode:** Phase 1 introduces `op.zig`, `bytecode.zig`, `compile.zig`, and a real VM loop; this interpreter remains useful for differential testing until the bytecode VM matches behavior.
