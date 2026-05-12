@@ -1,0 +1,22 @@
+.{
+    .name = .nexa,
+    .fingerprint = 0x69f2f4d76624a014,
+    .version = "0.0.0",
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "tests",
+        "bench",
+        "tools",
+        "examples",
+        "vendor",
+        "docs",
+        ".github",
+        "README.md",
+        "LICENSE",
+        "CONTRIBUTING.md",
+    },
+}
