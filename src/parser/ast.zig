@@ -101,6 +101,16 @@ pub const ForNumericStmt = struct {
     body: *Block,
 };
 
+/// `for namelist in explist do ... end` — `explist` is one or more expressions; only the first
+/// supplies the table to iterate; extras are evaluated for side effects (Lua-shaped).
+pub const ForGenericStmt = struct {
+    vars: []const []const u8,
+    iter: *Expr,
+    /// Expressions after the first in `in e1, e2, ...` (may be empty).
+    iter_rest: []const *Expr,
+    body: *Block,
+};
+
 pub const TableEntry = union(enum) {
     /// `{ expr }` — next consecutive positive integer key.
     array_elem: *Expr,
@@ -133,6 +143,7 @@ pub const Stmt = union(enum) {
     while_stmt: WhileStmt,
     repeat_stmt: RepeatStmt,
     for_numeric: ForNumericStmt,
+    for_generic: ForGenericStmt,
     func_decl: FuncDecl,
     ret: ReturnStmt,
     break_stmt: void,

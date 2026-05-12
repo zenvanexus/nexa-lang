@@ -15,7 +15,7 @@
 
 ## 2. Non-goals (Phase 0)
 
-- Bytecode, JIT, incremental GC, coroutines, full standard library, `require`, metamethods, `goto`, generic `for … in`, varargs `...`, proper `local function` desugaring, full numeric coercion rules, and full Lua lexical edge cases (e.g. long strings `[[...]]`).
+- Bytecode, JIT, incremental GC, coroutines, full standard library, `require`, metamethods, `goto`, full **iterator** protocol for `for … in` (three-value state machine), varargs `...`, proper `local function` desugaring, full numeric coercion rules, and full Lua lexical edge cases (e.g. long strings `[[...]]`).
 - Drop-in compatibility with every Lua program on the internet.
 
 ---
@@ -39,7 +39,7 @@ Two allocators at run boundary:
 
 **Expressions:** identifiers, grouping `(...)`, calls `f(a,b)`, indexing `t[k]` and `t.k` (field desugars to string key), unary `-` `not` `#`, binary `+ - * / % ^ ..`, comparisons `== ~= < <= > >=`, short-circuit `and` `or` (parser emits `ast.BinOp` for `and`/`or`; interpreter short-circuits), **table constructors** `{ … }` (list fields get consecutive integer keys `1..n`; `[k] = v` and `name = v` keyed fields; optional `,` / `;` between fields).
 
-**Statements:** `;`, expression statements, `local` (with `=` and expression lists; missing inits default to `nil`), assignment (multi-target / multi-value surface syntax; semantics match simple Lua for the supported cases), `if then [elseif then]* [else] end`, **numeric** `for v = e1, e2 [, e3] do … end` (step defaults to `1`; bounds and step must evaluate to numbers), `while do end`, `repeat until`, `do end`, `break`, `return` (only inside a function body), `function name(args) ... end` (registers a **global** function; use `local f = function() ... end` for locals).
+**Statements:** `;`, expression statements, `local` (with `=` and expression lists; missing inits default to `nil`), assignment (multi-target / multi-value surface syntax; semantics match simple Lua for the supported cases), `if then [elseif then]* [else] end`, **numeric** `for v = e1, e2 [, e3] do … end` (step defaults to `1`; bounds and step must evaluate to numbers), **generic** `for a [, b] in e [, e2, …] do … end` (only the first expression after `in` must evaluate to a **table**; further expressions are evaluated for side effects only), `while do end`, `repeat until`, `do end`, `break`, `return` (only inside a function body), `function name(args) ... end` (registers a **global** function; use `local f = function() ... end` for locals).
 
 **Anonymous functions:** `function(args) ... end` as an **expression** is parsed and creates a `FunctionObj` at runtime.
 
@@ -53,7 +53,7 @@ Two allocators at run boundary:
 - **Locals:** stack of scopes; each scope is a map name → `Value`. Lookup walks innermost → outermost then globals.
 - **Assignment:** walks scopes for an existing binding; otherwise creates/updates a **global** (Lua-like for this subset).
 - **Functions:** `Value.function` points at `FunctionObj` `{ name, params, body }`. Call pushes a fresh scope, binds parameters, runs `body`, first returned value becomes the call result (multiple returns are not surfaced to callers yet).
-- **Builtins:** `Value.builtin` — only `.print` is wired. Writes tab-separated arguments and a newline to the run’s output buffer (`std.array_list.Managed(u8)`).
+- **Builtins:** `Value.builtin` — `print` (tab-separated args + newline) and **`pairs(t)`** (returns `t`; generic `for` walks **array part** in index order `1..n`, then **string-keyed** entries in hash-map order — not full Lua `pairs` semantics).
 
 **Tables:** `Table` backs `t[k]` / `t.k` and **table constructors** `{ … }` (see expressions above). No metamethods or `__index` chain.
 
@@ -69,7 +69,7 @@ Two allocators at run boundary:
 | `string`  | Pointer to `String { bytes }` on the backing allocator. |
 | `table`   | Pointer to `Table` (array + string map). |
 | `function`| Pointer to `FunctionObj`. |
-| `builtin` | Host builtin dispatch (e.g. `print`). |
+| `builtin` | Host builtin dispatch (`print`, `pairs`, …). |
 
 **Truthiness:** `nil` and `false` are false; `0` is **true** (Lua rules); empty string is false.
 
@@ -94,7 +94,8 @@ On error, prints `@errorName` to stderr and exits with code `1`. Missing script 
 
 ## 9. Known gaps / next steps toward Phase 1
 
-- **Generic** `for namelist in explist`, metamethods, `_ENV`, exact Lua scoping for `function` statements in all contexts.
+- **Iterator fidelity:** real Lua generic `for` uses a `next, state, ctrl` triple; only **table + `pairs`** is supported here (no `ipairs`, no custom iterators).
+- **Metamethods**, `_ENV`, exact Lua scoping for `function` statements in all contexts.
 - **Heap teardown:** `Table` values from `{ … }` (and string keys stored in those tables) are not recursively freed when the interpreter exits; avoid GPA leak checks on scripts that retain tables until a GC or explicit teardown exists.
 - **Return values:** multi-return from calls; tail calls.
 - **Error locations:** no `source_info` module yet; parse/runtime errors use Zig `error` names only.

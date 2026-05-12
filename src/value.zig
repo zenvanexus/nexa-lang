@@ -4,6 +4,8 @@ const FunctionObj = @import("types/function.zig").FunctionObj;
 
 pub const Builtin = enum {
     print,
+    /// `pairs(t)` — returns `t`; `for … in pairs(t)` iterates array part then string keys.
+    pairs,
 };
 
 /// Phase 0 tagged union; later phases replace representation (NaN-boxing, etc.).

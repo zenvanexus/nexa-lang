@@ -59,6 +59,21 @@ test "eval print add" {
     try std.testing.expectEqualStrings("2\n", out.items);
 }
 
+test "for generic pairs" {
+    const src =
+        \\local t = { 10, x = 2 }
+        \\local s = 0
+        \\for k, v in pairs(t) do s = s + v end
+        \\print(s)
+    ;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var out = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer out.deinit();
+    try runChunk(arena.allocator(), src, &out);
+    try std.testing.expectEqualStrings("12\n", out.items);
+}
+
 test "elseif and numeric for" {
     const src =
         \\local x = 0

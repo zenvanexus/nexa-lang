@@ -42,6 +42,7 @@ pub const Interpreter = struct {
 
     pub fn seedBuiltins(self: *Interpreter) VmError!void {
         self.globals.put(self.backing, "print", .{ .builtin = .print }) catch return error.OutOfMemory;
+        self.globals.put(self.backing, "pairs", .{ .builtin = .pairs }) catch return error.OutOfMemory;
     }
 
     fn pushScope(self: *Interpreter) VmError!void {
@@ -188,6 +189,59 @@ pub const Interpreter = struct {
                     }
                     const after = cur + step_val;
                     try self.assignName(fr.var_name, .{ .number = after });
+                }
+                return .none;
+            },
+            .for_generic => |fg| {
+                if (fg.vars.len == 0 or fg.vars.len > 2) return error.TypeMismatch;
+                self.loop_depth += 1;
+                defer self.loop_depth -= 1;
+                for (fg.iter_rest) |ex| _ = try self.evalExpr(ex);
+                const tab_val = try self.evalExpr(fg.iter);
+                const tab = switch (tab_val) {
+                    .table => |t| t,
+                    else => return error.TypeMismatch,
+                };
+                try self.pushScope();
+                defer self.popScope();
+                var first_iter: bool = true;
+                var idx: usize = 1;
+                while (idx <= tab.array.items.len) : (idx += 1) {
+                    const key_v: Value = .{ .number = @floatFromInt(idx) };
+                    const val_v = tab.array.items[idx - 1];
+                    if (first_iter) {
+                        if (fg.vars.len >= 1) try self.declareLocal(fg.vars[0], key_v);
+                        if (fg.vars.len >= 2) try self.declareLocal(fg.vars[1], val_v);
+                        first_iter = false;
+                    } else {
+                        if (fg.vars.len >= 1) try self.assignName(fg.vars[0], key_v);
+                        if (fg.vars.len >= 2) try self.assignName(fg.vars[1], val_v);
+                    }
+                    const flow = try self.execBlock(fg.body, is_function);
+                    switch (flow) {
+                        .none => {},
+                        .@"break" => return .none,
+                        .ret => return flow,
+                    }
+                }
+                var map_it = tab.map.iterator();
+                while (map_it.next()) |kv| {
+                    const key_v: Value = .{ .string_lit = kv.key_ptr.* };
+                    const val_v = kv.value_ptr.*;
+                    if (first_iter) {
+                        if (fg.vars.len >= 1) try self.declareLocal(fg.vars[0], key_v);
+                        if (fg.vars.len >= 2) try self.declareLocal(fg.vars[1], val_v);
+                        first_iter = false;
+                    } else {
+                        if (fg.vars.len >= 1) try self.assignName(fg.vars[0], key_v);
+                        if (fg.vars.len >= 2) try self.assignName(fg.vars[1], val_v);
+                    }
+                    const flow = try self.execBlock(fg.body, is_function);
+                    switch (flow) {
+                        .none => {},
+                        .@"break" => return .none,
+                        .ret => return flow,
+                    }
                 }
                 return .none;
             },
@@ -343,6 +397,13 @@ pub const Interpreter = struct {
                     self.out.append('\n') catch return error.OutOfMemory;
                     return .nil;
                 },
+                .pairs => {
+                    if (args.len != 1) return error.ArityMismatch;
+                    return switch (args[0]) {
+                        .table => |t| .{ .table = t },
+                        else => error.TypeMismatch,
+                    };
+                },
             },
             .function => |f| {
                 if (args.len != f.params.len) return error.ArityMismatch;
@@ -394,7 +455,10 @@ fn appendValueToOut(self: *Interpreter, v: Value) VmError!void {
         .string_lit => |b| self.out.appendSlice(b) catch return error.OutOfMemory,
         .table => self.out.appendSlice("table") catch return error.OutOfMemory,
         .function => self.out.appendSlice("function") catch return error.OutOfMemory,
-        .builtin => self.out.appendSlice("builtin") catch return error.OutOfMemory,
+        .builtin => |b| try self.out.appendSlice(switch (b) {
+            .print => "print",
+            .pairs => "pairs",
+        }),
     }
 }
 

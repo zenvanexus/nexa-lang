@@ -198,26 +198,53 @@ const Parser = struct {
         } });
     }
 
-    /// `for` — numeric `for v = e1, e2 [, e3] do ... end` only (generic `for ... in` not yet).
+    /// `for` — numeric `for v = e1, e2 [, e3] do ... end` or generic `for a [, b] in e [, ...] do ... end`.
     fn parseForStatement(p: *Parser) ParseError!*ast.Stmt {
         try p.eat(.for_kw);
         if (p.at() != .ident) return error.UnexpectedToken;
-        const var_name = try p.dup(p.peek().lexeme);
+        const first = try p.dup(p.peek().lexeme);
         p.advance();
-        try p.eat(.eq);
-        const start_e = try p.parseExpr(0);
-        try p.eat(.comma);
-        const limit_e = try p.parseExpr(0);
-        const step_e: ?*ast.Expr = if (p.match(.comma)) try p.parseExpr(0) else null;
+        if (p.at() == .eq) {
+            try p.eat(.eq);
+            const start_e = try p.parseExpr(0);
+            try p.eat(.comma);
+            const limit_e = try p.parseExpr(0);
+            const step_e: ?*ast.Expr = if (p.match(.comma)) try p.parseExpr(0) else null;
+            try p.eat(.do);
+            const body_s = try p.stmtList(&.{.end});
+            try p.eat(.end);
+            const body = try p.allocBlock(body_s);
+            return p.allocStmt(.{ .for_numeric = .{
+                .var_name = first,
+                .start = start_e,
+                .limit = limit_e,
+                .step = step_e,
+                .body = body,
+            } });
+        }
+        var names: std.ArrayListUnmanaged([]const u8) = .{};
+        defer names.deinit(p.arena);
+        try names.append(p.arena, first);
+        while (p.match(.comma)) {
+            if (p.at() != .ident) return error.UnexpectedToken;
+            try names.append(p.arena, try p.dup(p.peek().lexeme));
+            p.advance();
+        }
+        try p.eat(.in_kw);
+        const iter0 = try p.parseExpr(0);
+        var rest: std.ArrayListUnmanaged(*ast.Expr) = .{};
+        defer rest.deinit(p.arena);
+        while (p.match(.comma)) {
+            try rest.append(p.arena, try p.parseExpr(0));
+        }
         try p.eat(.do);
         const body_s = try p.stmtList(&.{.end});
         try p.eat(.end);
         const body = try p.allocBlock(body_s);
-        return p.allocStmt(.{ .for_numeric = .{
-            .var_name = var_name,
-            .start = start_e,
-            .limit = limit_e,
-            .step = step_e,
+        return p.allocStmt(.{ .for_generic = .{
+            .vars = try names.toOwnedSlice(p.arena),
+            .iter = iter0,
+            .iter_rest = try rest.toOwnedSlice(p.arena),
             .body = body,
         } });
     }
