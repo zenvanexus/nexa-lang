@@ -1,6 +1,6 @@
 # Nexa
 
-**Nexa** is a Lua- / LuaJIT-shaped scripting language implemented in Zig. This Git repository is [`zig-lua-lang`](https://github.com/zenvanexus/zig-lua-lang); the language code name is **Nexa**.
+**Nexa** is a Lua- / LuaJIT-shaped scripting language implemented in Zig. This Git repository is **`nexa-lang`** on GitHub: [github.com/zenvanexus/nexa-lang](https://github.com/zenvanexus/nexa-lang). The language code name is **Nexa** (your local checkout directory may still be named something else).
 
 ## Requirements
 
